@@ -3,51 +3,12 @@ Simple Markdown Cheat Sheet
 </h1>
 <br/>
 
-> Please refer to tThe official documentation on [GitHub](https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax) to learn more about the formatting syntax.
+> Please refer to the official documentation on [GitHub](https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax) to learn more about the formatting syntax.
 
 Markdown is a method for writing formatted text using a simple plain text format. This document only cover the base markdown syntax to enahncing your Github README.
 
 - [Headings](#headings)
 - [Text styles](#text-styles)
-- [Syntax Highlighting](#syntax-highlighting)
-	* [Inline code](#inline-code)
-	* [Code block](#code-block)
-	* [Diff Code block](#diff-code-block)
-- [Alignments](#alignments)
-- [Tables](#tables)
-- [Links](#links)
-	* [Inline](#inline)
-	* [Reference](#reference)
-	* [Footnote](#footnote)
-	* [Relative](#relative)
-	* [Auto](#auto)
-	* [Section](#section)
-- [Images](#images)
-- [Badges](#badges)
-- [Lists](#lists)
-	* [Ordered](#ordered)
-	* [Unordered](#unordered)
-	* [Task](#task)
-- [Buttons](#buttons)
-- [Collapsible items (28 July 2023)](#collapsible-items-28-july-2023)
-- [Horizontal Rule](#horizontal-rule)
-- [Diagrams (19 July 2022)](#diagrams-19-july-2022)
-- [Mathematical expressions (19 July 2022)](#mathematical-expressions-19-july-2022)
-- [Alerts (8 January 2024)](#alerts-8-january-2024)
-- [Mention people and teams](#mention-people-and-teams)
-- [Reference issues and pull requests](#reference-issues-and-pull-requests)
-- [Color models](#color-models)
-- [Miscellaneous](#miscellaneous)
-	* [Comments](#comments)
-	* [Escaping Markdown Characters](#escaping-markdown-characters)
-- [Hash symbol](#hash-symbol)
-	* [Emojis](#emojis)
-	* [Line break](#line-break)
-	* [Back to top](#back-to-top)
-- [Bitbucket](#bitbucket)
-- [Azure DevOps Project wiki](#azure-devops-project-wiki)
-- [Tools](#tools)
-
 # Headings
 
 <!-- omit in toc -->
