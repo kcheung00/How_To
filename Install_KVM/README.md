@@ -1,0 +1,1 @@
+Kernel-based Virtual Machine (KVM) is a Type-1 hypervisor. It operates directly on the host hardware without the need for a host operating system. KVM is integrated into the Linux kernel, and it takes advantage of hardware virtualization extensions (such as Intel VT-x and AMD-V) to provide efficient virtualization.
