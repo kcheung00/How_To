@@ -1,0 +1,62 @@
+import com.microsoft.playwright.*;
+import io.restassured.RestAssured;
+import io.restassured.http.Cookies;
+import io.restassured.response.Response;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+public class RestAssuredPlaywrightAuth {
+    public static Cookies authenticateAndGetCookies() {
+        RestAssured.baseURI = "https://example.com";
+        String loginPayload = "{\"username\": \"your-username\", \"password\": \"your-password\"}";
+        
+        Response response = RestAssured.given()
+            .contentType("application/json")
+            .body(loginPayload)
+            .post("/login")
+            .then()
+            .statusCode(200)
+            .extract()
+            .response();
+        
+        return response.getDetailedCookies();
+    }
+
+    public static void useCookiesInPlaywright(Cookies restAssuredCookies) {
+        try (Playwright playwright = Playwright.create()) {
+            Browser browser = playwright.chromium().launch();
+            BrowserContext context = browser.newContext();
+
+            List<Map<String, Object>> playwrightCookies = new ArrayList<>();
+            for (io.restassured.http.Cookie raCookie : restAssuredCookies) {
+                Map<String, Object> cookie = new HashMap<>();
+                cookie.put("name", raCookie.getName());
+                cookie.put("value", raCookie.getValue());
+                cookie.put("domain", raCookie.getDomain() != null ? raCookie.getDomain() : ".example.com");
+                cookie.put("path", raCookie.getPath() != null ? raCookie.getPath() : "/");
+                cookie.put("expires", raCookie.getExpiryDate() != null ? raCookie.getExpiryDate().getTime() / 1000.0 : -1);
+                cookie.put("httpOnly", raCookie.isHttpOnly());
+                cookie.put("secure", raCookie.isSecure());
+                playwrightCookies.add(cookie);
+            }
+
+            context.addCookies(playwrightCookies);
+            Page page = context.newPage();
+            page.navigate("https://example.com/dashboard");
+            System.out.println("Page title: " + page.title());
+
+            Thread.sleep(5000); // Optional: Inspect manually
+            browser.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        Cookies cookies = authenticateAndGetCookies();
+        useCookiesInPlaywright(cookies);
+    }
+}
