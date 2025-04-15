@@ -1,1 +1,94 @@
+public class ProxiedClientHelper {
+    private static final Logger LOGGER = LogManager.getLogger(ProxiedClientHelper.class);
+    @Autowired private Environment envConstants;
+    @Autowired @Qualifier("webClientForProxy")
+    public final WebClient.Builder webClientBuilder;
+    @Retryable(retryFor = {HttpServerErrorException.class, WebClientRequestException.class,WebClientResponseException.class}, maxAttemptsExpression = "${cop.webclient.endpoint.maxAttempts:3}",backoff = @Backoff(delayExpression = "${cop.webclient.endpoint.maxDelay:5000}"))
+    public <I, O> Flux<O> execute(GenericRequest<I, O> genericRequest) throws CustomCheckedException {
+        Flux<O> response = null;
+        try {
+            String proxyHost = envConstants.getProperty("proxyHost");
+            int proxyPort = Integer.parseInt(envConstants.getProperty("proxyPort"));
+            HttpClient httpClient = HttpClient.create().proxy(proxy -> proxy.type(ProxyProvider.Proxy.HTTP).host(proxyHost).port(proxyPort))
+                    .doOnConnected(connection -> {
+                        if(LOGGER.isTraceEnabled()) {
+                            LOGGER.trace("Connected to connection: {}", connection);}
+                    });
+            response = this.webClientBuilder.clientConnector(new ReactorClientHttpConnector(httpClient)).build()
+                    .method(genericRequest.getHttpMethod()).uri(genericRequest.getServiceUrl())
+                    .headers(httpHeaders -> {
+                        if (null != genericRequest.getHttpHeaders() && !genericRequest.getHttpHeaders().getHeaders().isEmpty()) {
+                            httpHeaders.addAll(genericRequest.getHttpHeaders().getHeaders());
+                        }})
+                    .bodyValue(null != genericRequest.getRequestEntity() ? genericRequest.getRequestEntity() : "").retrieve()
+                    .onStatus(HttpStatusCode::is4xxClientError, clientResponse -> {
+                        if (clientResponse.statusCode().equals(HttpStatus.NOT_FOUND)) {
+                            return Mono.error(new CustomCheckedException(clientResponse.statusCode()));
+                        }
+                        return clientResponse.bodyToMono(String.class).flatMap(responseMessage -> Mono.error(new CustomCheckedException(responseMessage,clientResponse.statusCode())));
+                    }).onStatus(HttpStatusCode::is5xxServerError, clientResponse ->
+                            clientResponse.bodyToMono(String.class).flatMap(responseMessage -> Mono.error(new CustomCheckedException(responseMessage, clientResponse.statusCode())))
+                    ).bodyToFlux(genericRequest.getResponseEntity()).retryWhen(retryWhenRequestFail()).doOnNext(apiResponse -> logAPIResponse(genericRequest.getServiceUrl(), apiResponse));
+        } catch (HttpServerErrorException httpServerErrorException) {
+            throw new CustomCheckedException(httpServerErrorException.getMessage());
+        } catch (WebClientRequestException webClientRequestException) {
+            if (webClientRequestException.getCause() instanceof ConnectException) {
+                LOGGER.error("WebClientRequestException Connection Timed Out Exception occurs in GenericWebClient ", webClientRequestException);
+                throw new CustomCheckedException(webClientRequestException.getMessage());}
+        } catch (WebClientResponseException webClientResponseException) {
+            if (webClientResponseException.getStatusCode().is5xxServerError()) {
+                LOGGER.error("WebClientResponseException Connection Timed Out Exception occurs in GenericWebClient ",webClientResponseException);
+                throw new CustomCheckedException(webClientResponseException.getMessage());}}
+        return response;
+    }
+    private <O> O logAPIResponse(URI serviceUrl, O genericResponse) {
+        if (LOGGER.isTraceEnabled()) {
+            LOGGER.info("WebClient received response from URI endpoint:-{}", serviceUrl);
+        }
+        return genericResponse;
+    }
+    private RetryBackoffSpec retryWhenRequestFail() {
+        return Retry.backoff(2, Duration.ofSeconds(2)).doAfterRetry(retrySignal -> LOGGER.info("RETRY_ATTEMPTED | {} | Get Item Data Retry Attempted", retrySignal.totalRetries()))
+                .onRetryExhaustedThrow((retryBackoffSpec, retrySignal) -> retrySignal.failure());
+    }
+}
 
+
+
+
+
+@Test
+	void testExecute_ValidResponse() throws Exception {
+	    Environment mockEnvironment = mock(Environment.class);
+	    when(mockEnvironment.getProperty("proxyHost")).thenReturn("localhost");
+	    when(mockEnvironment.getProperty("proxyPort")).thenReturn("8080");
+	    WebClient.Builder mockWebClientBuilder = mock(WebClient.Builder.class);
+	    WebClient mockWebClient = mock(WebClient.class);
+	    WebClient.RequestBodyUriSpec mockRequestBodyUriSpec = mock(WebClient.RequestBodyUriSpec.class);
+	    WebClient.RequestHeadersSpec<?> mockRequestHeadersSpec = mock(WebClient.RequestHeadersSpec.class);
+	    WebClient.RequestBodySpec mockRequestBodySpec = mock(WebClient.RequestBodySpec.class);
+	    WebClient.ResponseSpec mockResponseSpec = mock(WebClient.ResponseSpec.class);
+	    ClientHttpConnector mockConnector = mock(ClientHttpConnector.class);
+	    when(mockWebClientBuilder.clientConnector(any(ClientHttpConnector.class))).thenReturn(mockWebClientBuilder);
+	    when(mockWebClientBuilder.build()).thenReturn(mockWebClient);
+	    when(mockWebClient.method(any(HttpMethod.class))).thenReturn(mockRequestBodyUriSpec);
+	    when(mockRequestBodyUriSpec.uri(any(URI.class))).thenReturn(mockRequestBodySpec);
+	    when(mockRequestBodySpec.headers(any())).thenReturn((RequestBodySpec) mockRequestHeadersSpec);
+	    when(mockRequestHeadersSpec.retrieve()).thenReturn(mockResponseSpec);
+	    when(mockResponseSpec.bodyToFlux(any(Class.class))).thenReturn(Flux.just("Response"));
+	    GenericRequest<String, String> genericRequest = new GenericRequest<>(null, null, null, null, null);
+	    genericRequest.setHttpMethod(HttpMethod.GET);
+	    genericRequest.setServiceUrl(new URI("http://example.com"));
+	    genericRequest.setHttpHeaders(new HttpEntity<>(new HttpHeaders()));
+	    genericRequest.setRequestEntity("Request");
+	    genericRequest.setResponseEntity(String.class);
+	    proxiedClientHelper = new ProxiedClientHelper(mockWebClientBuilder);
+	    Flux<String> response = proxiedClientHelper.execute(genericRequest);
+	    assertNotNull(response);
+	    assertEquals("Response", response.blockFirst());
+	    verify(mockEnvironment, times(1)).getProperty("proxyHost");
+	    verify(mockEnvironment, times(1)).getProperty("proxyPort");
+	    verify(mockWebClientBuilder, times(1)).clientConnector(any(ClientHttpConnector.class));
+	    verify(mockWebClientBuilder, times(1)).build();
+	    verify(mockWebClient, times(1)).method(any(HttpMethod.class));
+	}
