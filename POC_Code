@@ -92,3 +92,266 @@ public class ProxiedClientHelper {
 	    verify(mockWebClientBuilder, times(1)).build();
 	    verify(mockWebClient, times(1)).method(any(HttpMethod.class));
 	}
+
+
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.env.Environment;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.net.ConnectException;
+import java.net.URI;
+import java.time.Duration;
+import java.util.Collections;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class ProxiedClientHelperTest {
+
+    @Mock
+    private Environment envConstants;
+
+    @Mock
+    private WebClient.Builder webClientBuilder;
+
+    @Mock
+    private WebClient webClient;
+
+    @Mock
+    private WebClient.RequestBodyUriSpec requestBodyUriSpec;
+
+    @Mock
+    private WebClient.RequestBodySpec requestBodySpec;
+
+    @Mock
+    private WebClient.ResponseSpec responseSpec;
+
+    @InjectMocks
+    private ProxiedClientHelper proxiedClientHelper;
+
+    private GenericRequest<String, String> genericRequest;
+
+    @BeforeEach
+    void setUp() throws NoSuchFieldException, IllegalAccessException {
+        // Initialize generic request
+        genericRequest = new GenericRequest<>();
+        genericRequest.setHttpMethod(HttpMethod.GET);
+        genericRequest.setServiceUrl(URI.create("http://example.com"));
+        genericRequest.setRequestEntity("requestBody");
+        genericRequest.setResponseEntity(String.class);
+        genericRequest.setHttpHeaders(new HttpHeaders());
+
+        // Mock environment properties
+        when(envConstants.getProperty("proxyHost")).thenReturn("proxyHost");
+        when(envConstants.getProperty("proxyPort")).thenReturn("8080");
+
+        // Use reflection to set the WebClient.Builder
+        Field webClientBuilderField = ProxiedClientHelper.class.getDeclaredField("webClientBuilder");
+        webClientBuilderField.setAccessible(true);
+        webClientBuilderField.set(proxiedClientHelper, webClientBuilder);
+
+        // Mock WebClient chain
+        when(webClientBuilder.clientConnector(any())).thenReturn(webClientBuilder);
+        when(webClientBuilder.build()).thenReturn(webClient);
+        when(webClient.method(HttpMethod.GET)).thenReturn(requestBodyUriSpec);
+        when(requestBodyUriSpec.uri(any(URI.class))).thenReturn(requestBodySpec);
+        when(requestBodySpec.headers(any())).thenReturn(requestBodySpec);
+        when(requestBodySpec.bodyValue(any())).thenReturn(requestBodySpec);
+        when(requestBodySpec.retrieve()).thenReturn(responseSpec);
+    }
+
+    @Test
+    void testExecute_SuccessfulResponse() {
+        // Arrange
+        when(responseSpec.onStatus(any(), any())).thenReturn(responseSpec);
+        when(responseSpec.bodyToFlux(String.class)).thenReturn(Flux.just("response"));
+
+        // Act
+        Flux<String> result = proxiedClientHelper.execute(genericRequest);
+
+        // Assert
+        StepVerifier.create(result)
+                .expectNext("response")
+                .verifyComplete();
+    }
+
+    @Test
+    void testExecute_ClientError_NotFound() {
+        // Arrange
+        when(responseSpec.onStatus(eq(HttpStatusCode::is4xxClientError), any())).thenAnswer(invocation -> {
+            return Mono.error(new CustomCheckedException(HttpStatus.NOT_FOUND));
+        });
+        when(responseSpec.onStatus(eq(HttpStatusCode::is5xxServerError), any())).thenReturn(responseSpec);
+
+        // Act & Assert
+        StepVerifier.create(proxiedClientHelper.execute(genericRequest))
+                .expectErrorMatches(throwable -> throwable instanceof CustomCheckedException &&
+                        ((CustomCheckedException) throwable).getStatusCode() == HttpStatus.NOT_FOUND)
+                .verify();
+    }
+
+    @Test
+    void testExecute_ClientError_Other() {
+        // Arrange
+        String errorMessage = "Client error";
+        when(responseSpec.onStatus(eq(HttpStatusCode::is4xxClientError), any())).thenAnswer(invocation -> {
+            return Mono.just(errorMessage).flatMap(msg -> Mono.error(new CustomCheckedException(msg, HttpStatus.BAD_REQUEST)));
+        });
+        when(responseSpec.onStatus(eq(HttpStatusCode::is5xxServerError), any())).thenReturn(responseSpec);
+
+        // Act & Assert
+        StepVerifier.create(proxiedClientHelper.execute(genericRequest))
+                .expectErrorMatches(throwable -> throwable instanceof CustomCheckedException &&
+                        throwable.getMessage().equals(errorMessage) &&
+                        ((CustomCheckedException) throwable).getStatusCode() == HttpStatus.BAD_REQUEST)
+                .verify();
+    }
+
+    @Test
+    void testExecute_ServerError() {
+        // Arrange
+        String errorMessage = "Server error";
+        when(responseSpec.onStatus(eq(HttpStatusCode::is5xxServerError), any())).thenAnswer(invocation -> {
+            return Mono.just(errorMessage).flatMap(msg -> Mono.error(new CustomCheckedException(msg, HttpStatus.INTERNAL_SERVER_ERROR)));
+        });
+        when(responseSpec.onStatus(eq(HttpStatusCode::is4xxClientError), any())).thenReturn(responseSpec);
+
+        // Act & Assert
+        StepVerifier.create(proxiedClientHelper.execute(genericRequest))
+                .expectErrorMatches(throwable -> throwable instanceof CustomCheckedException &&
+                        throwable.getMessage().equals(errorMessage) &&
+                        ((CustomCheckedException) throwable).getStatusCode() == HttpStatus.INTERNAL_SERVER_ERROR)
+                .verify();
+    }
+
+    @Test
+    void testExecute_HttpServerErrorException() {
+        // Arrange
+        when(envConstants.getProperty("proxyPort")).thenThrow(new RuntimeException("Invalid port"));
+
+        // Act & Assert
+        StepVerifier.create(proxiedClientHelper.execute(genericRequest))
+                .expectError(CustomCheckedException.class)
+                .verify();
+    }
+
+    @Test
+    void testExecute_WebClientRequestException_ConnectException() {
+        // Arrange
+        WebClientRequestException exception = new WebClientRequestException(
+                new ConnectException("Connection timed out"), HttpMethod.GET, URI.create("http://example.com"), HttpHeaders.EMPTY);
+        when(requestBodySpec.retrieve()).thenThrow(exception);
+
+        // Act & Assert
+        StepVerifier.create(proxiedClientHelper.execute(genericRequest))
+                .expectErrorMatches(throwable -> throwable instanceof CustomCheckedException &&
+                        throwable.getMessage().contains("Connection timed out"))
+                .verify();
+    }
+
+    @Test
+    void testExecute_WebClientResponseException_ServerError() {
+        // Arrange
+        WebClientResponseException exception = new WebClientResponseException(
+                "Server error", HttpStatus.INTERNAL_SERVER_ERROR.value(), "Internal Server Error", HttpHeaders.EMPTY, null, null);
+        when(requestBodySpec.retrieve()).thenThrow(exception);
+
+        // Act & Assert
+        StepVerifier.create(proxiedClientHelper.execute(genericRequest))
+                .expectErrorMatches(throwable -> throwable instanceof CustomCheckedException &&
+                        throwable.getMessage().contains("Server error"))
+                .verify();
+    }
+
+    @Test
+    void testLogAPIResponse() throws Exception {
+        // Arrange
+        Method logAPIResponseMethod = ProxiedClientHelper.class.getDeclaredMethod("logAPIResponse", URI.class, Object.class);
+        logAPIResponseMethod.setAccessible(true);
+        URI serviceUrl = URI.create("http://example.com");
+        String response = "response";
+
+        // Act
+        Object result = logAPIResponseMethod.invoke(proxiedClientHelper, serviceUrl, response);
+
+        // Assert
+        assert result.equals(response);
+    }
+
+    @Test
+    void testRetryWhenRequestFail() throws Exception {
+        // Arrange
+        Method retryWhenRequestFailMethod = ProxiedClientHelper.class.getDeclaredMethod("retryWhenRequestFail");
+        retryWhenRequestFailMethod.setAccessible(true);
+
+        // Act
+        Object retrySpec = retryWhenRequestFailMethod.invoke(proxiedClientHelper);
+
+        // Assert
+        assert retrySpec != null;
+    }
+
+    @Test
+    void testExecute_RetryLogic() {
+        // Arrange
+        when(responseSpec.onStatus(any(), any())).thenReturn(responseSpec);
+        when(responseSpec.bodyToFlux(String.class)).thenReturn(Flux.error(new WebClientRequestException(
+                new RuntimeException("Request failed"), HttpMethod.GET, URI.create("http://example.com"), HttpHeaders.EMPTY)))
+                .thenReturn(Flux.just("response"));
+
+        // Act
+        Flux<String> result = proxiedClientHelper.execute(genericRequest);
+
+        // Assert
+        StepVerifier.create(result)
+                .expectNext("response")
+                .verifyComplete();
+    }
+
+    @Test
+    void testExecute_WithNullRequestEntity() {
+        // Arrange
+        genericRequest.setRequestEntity(null);
+        when(responseSpec.onStatus(any(), any())).thenReturn(responseSpec);
+        when(responseSpec.bodyToFlux(String.class)).thenReturn(Flux.just("response"));
+
+        // Act
+        Flux<String> result = proxiedClientHelper.execute(genericRequest);
+
+        // Assert
+        StepVerifier.create(result)
+                .expectNext("response")
+                .verifyComplete();
+    }
+
+    @Test
+    void testExecute_WithEmptyHttpHeaders() {
+        // Arrange
+        genericRequest.setHttpHeaders(null);
+        when(responseSpec.onStatus(any(), any())).thenReturn(responseSpec);
+        when(responseSpec.bodyToFlux(String.class)).thenReturn(Flux.just("response"));
+
+        // Act
+        Flux<String> result = proxiedClientHelper.execute(genericRequest);
+
+        // Assert
+        StepVerifier.create(result)
+                .expectNext("response")
+                .verifyComplete();
+    }
+}
