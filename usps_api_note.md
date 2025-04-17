@@ -33,3 +33,13 @@ https://apis.usps.com
 USPS APIs Cloud Enrollment:<br>
 https://developers.usps.com/sites/default/files/2024-10/USPS%20API%20Cloud%20Enrollment.pdf
 
+Eugene credential<br>
+```
+curl --location 'https://apis.usps.com/oauth2/v3/token' \
+--header 'Content-Type: application/json' \
+--data '{
+    "client_id": "PG28G7RV9bMTTb52APgg7H96euRjojbJhrpI6wGSpNEIJAGZ",
+    "client_secret": "ENdIT9R658phiHUQDSGU9Mlx8qEfLlKPQdQ2QFj0CDotwZDyqK5AZhmGdjDfbG76",
+    "grant_type": "client_credentials"
+}'
+```
